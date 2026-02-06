@@ -35,6 +35,7 @@
       <div>
         <h1>Slop → HTML/CSS/JS — AI Editor</h1>
         <div class="meta">Enter your HuggingFace API key below; it stays in this browser only.</div>
+        <div id="status" class="meta" style="margin-top:6px;color:var(--muted)"></div>
       </div>
     </header>
 
@@ -102,6 +103,11 @@
     const clearHistoryBtn = document.getElementById('clearHistory');
 
     const STORAGE_KEY = 'slop_ai_history_v1';
+    const statusEl = document.getElementById('status');
+
+    function setStatus(msg, isError=false){
+      if(!statusEl) return; statusEl.textContent = msg; statusEl.style.color = isError ? '#ffb4b4' : 'var(--muted)';
+    }
 
     function loadHistory(){
       try{ return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]') }catch(e){return[]}
@@ -138,15 +144,53 @@
       const url = `https://api-inference.huggingface.co/models/${model}`;
       const body = { inputs: prompt, parameters:{ max_new_tokens:800, temperature:0.2 } };
       try{
-        const res = await fetch(url, { method:'POST', headers:{ 'Authorization': 'Bearer '+key, 'Content-Type':'application/json' }, body: JSON.stringify(body) });
-        if(!res.ok){ const txt = await res.text(); throw new Error(res.status + ' ' + txt) }
-        const data = await res.json();
-        // HF may return [{generated_text: '...'}] or { error }
-        if(Array.isArray(data) && data[0] && data[0].generated_text) return data[0].generated_text
-        if(data.generated_text) return data.generated_text
-        if(typeof data === 'string') return data
-        return JSON.stringify(data)
-      }catch(err){ console.error(err); alert('Error calling HuggingFace: '+ err.message); return null }
+        setStatus('Calling model...');
+        const res = await fetch(url, { method:'POST', headers:{ 'Authorization': 'Bearer '+key, 'Content-Type':'application/json' }, body: JSON.stringify(body), mode: 'cors' });
+        const contentType = (res.headers.get('content-type') || '').toLowerCase();
+        const text = await res.text();
+        if(!res.ok){
+          let parsed = null;
+          try{ parsed = JSON.parse(text) }catch(e){}
+          const errMsg = parsed && (parsed.error || parsed.detail) ? (parsed.error || parsed.detail) : text;
+          setStatus(`Request failed: ${res.status} ${res.statusText} — ${errMsg}`, true);
+          throw new Error(res.status + ' ' + errMsg)
+        }
+
+        // If JSON, parse and extract generated_text if present
+        if(contentType.includes('application/json')){
+          let data;
+          try{ data = JSON.parse(text) }catch(e){ data = text }
+          if(Array.isArray(data) && data[0] && data[0].generated_text) return data[0].generated_text
+          if(data && data.generated_text) return data.generated_text
+          if(data && data.error){ setStatus(data.error, true); alert('Error: '+data.error); return null }
+          return typeof data === 'string' ? data : JSON.stringify(data)
+        }
+
+        // Handle streaming/NDJSON-like responses or plain text
+        try{
+          // look for lines containing JSON objects with generated_text
+          const lines = text.split(/\r?\n/).filter(Boolean);
+          for(let i = lines.length - 1; i >= 0; i--){
+            const ln = lines[i].replace(/^data:\s*/i, '');
+            try{
+              const obj = JSON.parse(ln);
+              if(obj && obj.generated_text) return obj.generated_text;
+            }catch(e){}
+          }
+        }catch(e){}
+
+        // fallback to raw text
+        return text
+      }catch(err){
+        console.error(err);
+        if(err.name === 'TypeError'){
+          setStatus('Network/CORS error calling HuggingFace. Use a server proxy or run locally.', true);
+        } else {
+          setStatus('Error calling HuggingFace: ' + (err.message||err), true);
+        }
+        alert('Error calling HuggingFace: '+ (err.message||err));
+        return null
+      }
     }
 
     function buildPrompt(slop, history){
