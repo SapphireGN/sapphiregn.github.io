@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Slop → HTML/CSS/JS — AI Editor</title>
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--muted:#9aa4b2;--accent:#7c5cff;--success:#16a34a}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;background:linear-gradient(180deg,#071022 0%,#07102b 100%);color:#e6eef6}
+    .wrap{max-width:1100px;margin:28px auto;padding:20px}
+    header{display:flex;gap:16px;align-items:center;margin-bottom:18px}
+    h1{font-size:18px;margin:0}
+    .row{display:flex;gap:12px}
+    .card{background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent);padding:14px;border-radius:12px;box-shadow:0 6px 20px rgba(2,6,23,0.6)}
+    .controls{display:flex;gap:12px;align-items:center}
+    input[type=text],select,textarea{background:transparent;border:1px solid rgba(255,255,255,0.06);padding:10px;border-radius:8px;color:inherit;min-width:0}
+    textarea{min-height:160px;resize:vertical;width:100%;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, 'Roboto Mono', monospace}
+    button{background:var(--accent);border:0;color:white;padding:10px 14px;border-radius:8px;cursor:pointer}
+    button.secondary{background:transparent;border:1px solid rgba(255,255,255,0.06)}
+    .grid{display:grid;grid-template-columns:1fr 420px;gap:12px}
+    .sidebar{display:flex;flex-direction:column;gap:12px}
+    .history{max-height:360px;overflow:auto;border-radius:8px;padding:8px;background:rgba(0,0,0,0.04)}
+    .hist-item{padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.02);margin-bottom:8px;cursor:pointer}
+    .preview{height:380px;border-radius:8px;border:0;width:100%;background:white}
+    .meta{font-size:12px;color:var(--muted)}
+    .footer{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-top:12px}
+    .danger{color:#ffb4b4}
+    .note{font-size:13px;color:var(--muted)}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>Slop → HTML/CSS/JS — AI Editor</h1>
+        <div class="meta">Enter your HuggingFace API key below; it stays in this browser only.</div>
+      </div>
+    </header>
+
+    <div class="grid">
+      <div class="card">
+        <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">
+          <input id="apiKey" type="text" placeholder="Paste HuggingFace API key here (will not be sent anywhere else)" style="flex:1" />
+          <select id="model" title="HF model" style="width:240px">
+            <option value="meta-llama/Llama-2-13b-instruct">meta-llama/Llama-2-13b-instruct</option>
+            <option value="meta-llama/Llama-2-7b-instruct">meta-llama/Llama-2-7b-instruct</option>
+            <option value="samwit/llama-2-13b-chat-hf">samwit/llama-2-13b-chat-hf</option>
+          </select>
+        </div>
+
+        <div style="margin-bottom:8px"><strong>Slop input</strong> — write your idea or slop code here.</div>
+        <textarea id="slop" placeholder="Example: single-file site that shows a photo gallery with Play/Pause controls; style like minimal, purple accent"></textarea>
+
+        <div class="footer">
+          <div style="display:flex;gap:8px">
+            <button id="generate">Generate</button>
+            <button class="secondary" id="insertGenerated">Load generated into editor</button>
+            <button class="secondary" id="clear">Clear</button>
+          </div>
+          <div class="note">Outputs saved locally; AI context preserved for better edits.</div>
+        </div>
+      </div>
+
+      <div class="sidebar">
+        <div class="card" style="padding:10px;display:flex;flex-direction:column;gap:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <strong>History</strong>
+            <div style="display:flex;gap:8px">
+              <button id="downloadAll" class="secondary">Download</button>
+              <button id="clearHistory" class="secondary danger">Clear</button>
+            </div>
+          </div>
+          <div id="history" class="history"></div>
+        </div>
+
+        <div class="card" style="padding:8px">
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <button id="previewBtn">Preview</button>
+            <button id="downloadBtn" class="secondary">Download Latest</button>
+          </div>
+          <iframe id="preview" class="preview"></iframe>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Minimal client-side app. WARNING: Putting your API key in the browser is insecure for public sites.
+    const apiKeyEl = document.getElementById('apiKey');
+    const modelEl = document.getElementById('model');
+    const slopEl = document.getElementById('slop');
+    const generateBtn = document.getElementById('generate');
+    const historyEl = document.getElementById('history');
+    const previewEl = document.getElementById('preview');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const previewBtn = document.getElementById('previewBtn');
+    const clearBtn = document.getElementById('clear');
+    const insertBtn = document.getElementById('insertGenerated');
+    const downloadAllBtn = document.getElementById('downloadAll');
+    const clearHistoryBtn = document.getElementById('clearHistory');
+
+    const STORAGE_KEY = 'slop_ai_history_v1';
+
+    function loadHistory(){
+      try{ return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]') }catch(e){return[]}
+    }
+
+    function saveHistory(h){ localStorage.setItem(STORAGE_KEY, JSON.stringify(h)) }
+
+    function renderHistory(){
+      const h = loadHistory(); historyEl.innerHTML = '';
+      h.slice().reverse().forEach((entry, idx) => {
+        const div = document.createElement('div'); div.className='hist-item';
+        div.innerHTML = `<div style="font-size:13px;font-weight:600">${escapeHtml(entry.title||entry.slop || 'Untitled')}</div><div class="meta">${new Date(entry.ts).toLocaleString()}</div>`;
+        div.addEventListener('click', ()=>{
+          previewEl.srcdoc = entry.output || '<!-- no output -->';
+        });
+        div.addEventListener('dblclick', ()=>{
+          // load generated HTML back into slop editor for re-editing (user can paste back as slop)
+          slopEl.value = entry.slop || '';
+        });
+        historyEl.appendChild(div);
+      });
+    }
+
+    function escapeHtml(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+
+    function addHistoryItem(item){ const h = loadHistory(); h.push(item); saveHistory(h); renderHistory(); }
+
+    function downloadText(filename, text){ const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text],{type:'text/html'})); a.download = filename; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),10000); }
+
+    async function callHuggingFace(prompt){
+      const key = apiKeyEl.value.trim();
+      if(!key){ alert('Enter your HuggingFace API key in the top input first.'); return null }
+      const model = modelEl.value;
+      const url = `https://api-inference.huggingface.co/models/${model}`;
+      const body = { inputs: prompt, parameters:{ max_new_tokens:800, temperature:0.2 } };
+      try{
+        const res = await fetch(url, { method:'POST', headers:{ 'Authorization': 'Bearer '+key, 'Content-Type':'application/json' }, body: JSON.stringify(body) });
+        if(!res.ok){ const txt = await res.text(); throw new Error(res.status + ' ' + txt) }
+        const data = await res.json();
+        // HF may return [{generated_text: '...'}] or { error }
+        if(Array.isArray(data) && data[0] && data[0].generated_text) return data[0].generated_text
+        if(data.generated_text) return data.generated_text
+        if(typeof data === 'string') return data
+        return JSON.stringify(data)
+      }catch(err){ console.error(err); alert('Error calling HuggingFace: '+ err.message); return null }
+    }
+
+    function buildPrompt(slop, history){
+      // Provide conversation context so model can remember prior edits.
+      const sys = `You are an assistant that converts informal "slop" descriptions into a single-file HTML document containing inline <style> and <script> tags. Output only the complete HTML file. Preserve user intent and keep the UI accessible and minimal. When asked to update, incorporate previous outputs.`;
+      const histText = (history||[]).map(h=>`Previous output (${new Date(h.ts).toLocaleString()}):\n${h.output}\n`).join('\n');
+      return sys + '\n\n' + (histText?('CONTEXT:\n'+histText+'\n'):'') + 'User slop:\n' + slop + '\n\nRespond with a single HTML document.';
+    }
+
+    generateBtn.addEventListener('click', async ()=>{
+      const slop = slopEl.value.trim(); if(!slop){ alert('Enter some slop text first.'); return }
+      generateBtn.disabled = true; generateBtn.textContent = 'Generating...';
+      const history = loadHistory();
+      const prompt = buildPrompt(slop, history.slice(-3)); // include last 3 outputs for context
+      const out = await callHuggingFace(prompt);
+      generateBtn.disabled = false; generateBtn.textContent = 'Generate';
+      if(!out) return;
+      const item = { ts: Date.now(), slop, output: out, title: slop.split('\n')[0].slice(0,80) };
+      addHistoryItem(item);
+      previewEl.srcdoc = out;
+    });
+
+    previewBtn.addEventListener('click', ()=>{
+      const h = loadHistory(); if(!h.length){ alert('No generated output yet.'); return }
+      previewEl.srcdoc = h[h.length-1].output || '';
+    });
+
+    downloadBtn.addEventListener('click', ()=>{
+      const h = loadHistory(); if(!h.length){ alert('No generated output to download.'); return }
+      const latest = h[h.length-1]; downloadText((latest.title||'site') + '.html', latest.output || '');
+    });
+
+    clearBtn.addEventListener('click', ()=>{ if(confirm('Clear editor?')) slopEl.value = '' });
+
+    insertBtn.addEventListener('click', ()=>{
+      const h = loadHistory(); if(!h.length){ alert('No generated output yet.'); return }
+      // load latest output's HTML into slop area for re-editing as slop
+      slopEl.value = h[h.length-1].slop || '';
+      alert('Loaded the original slop text from the latest generation into the editor for re-editing.');
+    });
+
+    downloadAllBtn.addEventListener('click', ()=>{
+      const h = loadHistory(); if(!h.length){ alert('No outputs saved.'); return }
+      const zipContent = h.map((it,i)=>`---- ${i+1} ${new Date(it.ts).toLocaleString()} ----\nTitle: ${it.title}\n\n${it.output}\n\n`).join('\n');
+      downloadText('slop_history.txt', zipContent);
+    });
+
+    clearHistoryBtn.addEventListener('click', ()=>{ if(confirm('Clear all saved history?')){ localStorage.removeItem(STORAGE_KEY); renderHistory(); previewEl.srcdoc = ''; } });
+
+    // init
+    renderHistory();
+
+    // allow drop-in of API key via URL param hf_key=...
+    (function(){ try{ const params = new URLSearchParams(window.location.search); if(params.get('hf_key')) apiKeyEl.value = params.get('hf_key'); }catch(e){} })();
+  </script>
+</body>
+</html>
