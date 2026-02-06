@@ -42,11 +42,12 @@
       <div class="card">
         <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">
           <input id="apiKey" type="text" placeholder="Paste HuggingFace API key here (will not be sent anywhere else)" style="flex:1" />
-          <select id="model" title="HF model" style="width:240px">
-            <option value="meta-llama/Llama-2-13b-instruct">meta-llama/Llama-2-13b-instruct</option>
-            <option value="meta-llama/Llama-2-7b-instruct">meta-llama/Llama-2-7b-instruct</option>
-            <option value="samwit/llama-2-13b-chat-hf">samwit/llama-2-13b-chat-hf</option>
-          </select>
+          <input id="model" type="text" placeholder="e.g. meta-llama/Llama-2-13b-instruct" list="model-suggestions" style="width:240px" value="meta-llama/Llama-3.1-8B-Instruct" />
+          <datalist id="model-suggestions">
+            <option value="meta-llama/Llama-2-13b-instruct"></option>
+            <option value="meta-llama/Llama-2-7b-instruct"></option>
+            <option value="samwit/llama-2-13b-chat-hf"></option>
+          </datalist>
         </div>
 
         <div style="margin-bottom:8px"><strong>Slop input</strong> — write your idea or slop code here.</div>
