@@ -1,0 +1,13 @@
+{
+  "name": "slopcode-hf-proxy",
+  "version": "0.1.0",
+  "description": "Local proxy to call HuggingFace Inference API to avoid browser CORS issues",
+  "main": "proxy.js",
+  "scripts": {
+    "start": "node proxy.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2"
+  }
+}

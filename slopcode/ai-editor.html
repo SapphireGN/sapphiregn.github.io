@@ -51,6 +51,10 @@
           </datalist>
         </div>
 
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+          <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input id="useProxy" type="checkbox" /> Use local proxy (run server/proxy.js)</label>
+        </div>
+
         <div style="margin-bottom:8px"><strong>Slop input</strong> — write your idea or slop code here.</div>
         <textarea id="slop" placeholder="Example: single-file site that shows a photo gallery with Play/Pause controls; style like minimal, purple accent"></textarea>
 
@@ -137,15 +141,26 @@
 
     function downloadText(filename, text){ const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text],{type:'text/html'})); a.download = filename; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),10000); }
 
+    const useProxyEl = document.getElementById('useProxy');
+
     async function callHuggingFace(prompt){
-      const key = apiKeyEl.value.trim();
-      if(!key){ alert('Enter your HuggingFace API key in the top input first.'); return null }
+      const useProxy = useProxyEl && useProxyEl.checked;
       const model = modelEl.value;
-      const url = `https://api-inference.huggingface.co/models/${model}`;
       const body = { inputs: prompt, parameters:{ max_new_tokens:800, temperature:0.2 } };
       try{
         setStatus('Calling model...');
-        const res = await fetch(url, { method:'POST', headers:{ 'Authorization': 'Bearer '+key, 'Content-Type':'application/json' }, body: JSON.stringify(body), mode: 'cors' });
+        let url, headers = { 'Content-Type': 'application/json' };
+        if(useProxy){
+          // Call local proxy which must be running separately. Proxy will add the server-side HF key.
+          url = `/proxy/models/${encodeURIComponent(model)}`;
+        } else {
+          const key = apiKeyEl.value.trim();
+          if(!key){ alert('Enter your HuggingFace API key in the top input first, or enable the local proxy.'); return null }
+          url = `https://api-inference.huggingface.co/models/${model}`;
+          headers['Authorization'] = 'Bearer ' + key;
+        }
+
+        const res = await fetch(url, { method:'POST', headers, body: JSON.stringify(body), mode: 'cors' });
         const contentType = (res.headers.get('content-type') || '').toLowerCase();
         const text = await res.text();
         if(!res.ok){
@@ -168,18 +183,13 @@
 
         // Handle streaming/NDJSON-like responses or plain text
         try{
-          // look for lines containing JSON objects with generated_text
           const lines = text.split(/\r?\n/).filter(Boolean);
           for(let i = lines.length - 1; i >= 0; i--){
             const ln = lines[i].replace(/^data:\s*/i, '');
-            try{
-              const obj = JSON.parse(ln);
-              if(obj && obj.generated_text) return obj.generated_text;
-            }catch(e){}
+            try{ const obj = JSON.parse(ln); if(obj && obj.generated_text) return obj.generated_text; }catch(e){}
           }
         }catch(e){}
 
-        // fallback to raw text
         return text
       }catch(err){
         console.error(err);
